@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // True when the signed-in user (or device) owns this auction.
+    function isOwner(aid) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/auctions/$(aid)).data.owner == request.auth.uid;
+    }
+
+    // One public record per auction (name, status, counts): anyone can read it,
+    // only its owner can change or delete it.
+    match /auctions/{aid} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.owner == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.owner == request.auth.uid
+                    && request.resource.data.owner == request.auth.uid;
+      allow delete: if request.auth != null
+                    && resource.data.owner == request.auth.uid;
+
+      // What viewers see during the live auction.
+      match /live/{docId} {
+        allow read: if true;
+        allow write: if isOwner(aid);
+      }
+
+      // The organizer's full saved auction, and its logos and photos. Owner only.
+      match /private/{docId} {
+        allow read, write: if isOwner(aid);
+      }
+      match /media/{docId} {
+        allow read, write: if isOwner(aid);
+      }
+
+      // Player sign-ups: anyone can submit one while sign-up is open,
+      // only the organizer can see, edit or remove them.
+      match /regs/{rid} {
+        allow read, update, delete: if isOwner(aid);
+        allow create: if request.auth != null
+                     && get(/databases/$(database)/documents/auctions/$(aid)).data.regOpen == true
+                     && request.resource.data.keys().hasOnly(['name', 'age', 'role', 'photo', 'createdAt', 'device'])
+                     && request.resource.data.name is string
+                     && request.resource.data.name.size() > 0
+                     && request.resource.data.name.size() <= 60
+                     && request.resource.data.age is int
+                     && request.resource.data.age >= 5
+                     && request.resource.data.age <= 99
+                     && request.resource.data.role is string
+                     && request.resource.data.role.size() <= 40
+                     && request.resource.data.photo is string
+                     && request.resource.data.photo.size() <= 200000
+                     && request.resource.data.device == request.auth.uid;
+      }
+    }
+  }
+}
